@@ -1,5 +1,5 @@
 create_dir  /foo "              
-create /foo/bar
+create /foo/bar/qux
 create_dir /foo/baz
 create /foo/baz/qux
 write  /foo/bar "test"
