@@ -14,7 +14,7 @@
  * Imposed restrictions.
  */
 #define MAX_NAME_LENGTH   255
-#define MAX_TREE_HEIGTH   255
+#define MAX_TREE_HEIGHT   255
 #define MAX_SONS_PER_NODE 1024
 
 /*
@@ -67,63 +67,59 @@ struct simplefs_node_group {
     int free_sons;
 };
 
-/*
- * Given a path it returns an array of strings 
- * where every element is a subdirectory of the path,
- * this is achieved by splitting the path string at every '/'.
- *
- * path: string representing the path to be split.
- *
- * return: array of strings containing subdirs of path.
- */
-char **split_path(char *path) {
-    char **result = malloc(sizeof(char *));
+int split_path(char *path, char destination[MAX_NAME_LENGTH][MAX_TREE_HEIGHT]) {
     int depth = 0;
     char *token = NULL;
-    char *path_copy = strdup(path);
-   
+    char *path_copy = strdup(path);  
+    char *c;
+    
     if(strcmp("/", path) == 0) {
-        result[0] = strdup("/");
-        return result;
+        return 0;
     }
-
-    if(*path_copy == '/') path_copy++;
-
+    
+    path_copy++;
+    c = path_copy + strlen(path_copy) - 1;
+    if(*c == '/') *c = '\0';    
+    
     while((token = strsep(&path_copy, "/")) != NULL) {
-        result[depth] = token; 
+        if(strlen(token) > MAX_NAME_LENGTH) {
+            return -2;
+        }
+        strcpy(destination[depth], token); 
         depth++;
-        result = realloc(result, depth * sizeof(char *));
+        if(depth >= MAX_TREE_HEIGHT) {
+            return -1;
+        } 
     }
-    result[depth] = NULL;
-    return result; 
+    
+    return depth; 
 }
 
-/*
- * Given a path it will return the last resource in it.
- * ATTENTION, path will be modified! 
- * The last resource returned as a value will be removed from it.
- *
- * path: string representing the path to be modified.
- *
- * returns: string after last '/' character.
- */
-char *remove_last_entry_from_path(char *path) {
-    char *tmp = path + strlen(path) - 1;
-    
-    if(*tmp == '/') {
-        *tmp = '\0';
-        tmp--;
+char *get_last_path_entry(char *path) {
+    int length = strlen(path);
+    if( (length > 1) && *(path+length-1) != '/' ) {
+        return strdup(strrchr(path, '/')+1);
+    } else {
+        return NULL;
+    }
+}
+
+char *remove_last_path_entry(char *path) {
+    char *last_slash = NULL;
+    int length = strlen(path);
+    char *new_path = strdup(path);
+    if(length == 1) {
+        return new_path;
     }
     
-    while(*tmp != '/') tmp--; /* now tmp points to the first '/' */
+    last_slash = strrchr(new_path, '/');
     
-    if(tmp == path) {
-        char *result = strdup(tmp+1);
-        *(path+1) = '\0';
-        return result;
+    if(last_slash == new_path) {
+        return strdup("/");
     }
-    *tmp = '\0';
-    return tmp+1;
+    
+    *last_slash = '\0';
+    return strdup(new_path);
 }
 
 /*
@@ -234,8 +230,6 @@ struct simplefs_node *simplefs_find_son(struct simplefs_node *node, char *name) 
     while(iterator != NULL) {
         for(i = 0; i < SONS_PER_GROUP; i++) {
             if((iterator->sons)[i] != NULL) {
-                /* TOREMOVE */
-                /* printf("%s %p\n", (iterator->sons)[i]->name, (void *)iterator); */
                 if(strcmp((iterator->sons)[i]->name, name)==0) {
                     return (iterator->sons)[i];
                 }
@@ -248,35 +242,51 @@ struct simplefs_node *simplefs_find_son(struct simplefs_node *node, char *name) 
 
 
 struct simplefs_node *simplefs_walk_path(struct simplefs_node *root, char *path) {
-    char **directories = split_path(path);
+    char directories[255][255];
+    int depth = 0;
     int i = 0;
-    struct simplefs_node *nextup = root, *result;
+    struct simplefs_node *nextup = root;
 
-    if(strcmp(directories[0], "/") == 0) return root;
+    depth = split_path(path, directories);
 
-    while(directories[i] != NULL){
-        result = nextup;
+    if(depth == 0) return root;
+
+    if(depth < 0) return NULL;
+
+    for(i = 0; i < depth; i++){
         nextup = simplefs_find_son(nextup, directories[i]);
-        i++;
+        if(nextup == NULL) break;
     }
     return nextup;
 }
 
 int simplefs_add_son_to_node(struct simplefs_node *parent, struct simplefs_node *son) {
-    int i = 0;
-    struct simplefs_node_group *iterator = parent->dir;
+    int i = 0, first_free_son = MAX_SONS_PER_NODE + 1;
+    struct simplefs_node_group *iterator = parent->dir, 
+                               *group_containing_first_free_son = NULL;
+    
     while(iterator != NULL) {
         if(iterator->free_sons > 0) {
             for(i = 0; i < SONS_PER_GROUP; i++) {
-                if((iterator->sons)[i] == NULL) {
-                    (iterator->sons)[i] = son;
-                    iterator->free_sons--;
-                    return 1;
+                if((iterator->sons)[i] == NULL && first_free_son == MAX_SONS_PER_NODE + 1) {
+                    first_free_son = i;
+                    group_containing_first_free_son = iterator;
+                } else if((iterator->sons)[i] != NULL) {
+                    if(strcmp(son->name, (iterator->sons)[i]->name) == 0) {
+                        return 0;
+                    }    
                 }
             }
         }
         iterator = iterator->next;
     }
+
+    if(group_containing_first_free_son != NULL) {
+        (group_containing_first_free_son->sons)[first_free_son] = son;
+        group_containing_first_free_son->free_sons--;
+        return 1;
+    }
+
     if(parent->number_of_groups < GROUPS_PER_NODE){
         struct simplefs_node_group *new_group;
         new_group = simplefs_init_node_group(parent, NULL);
@@ -291,33 +301,48 @@ int simplefs_add_son_to_node(struct simplefs_node *parent, struct simplefs_node 
     return 0;
 }
 
-int simplefs_create_node(struct simplefs_node *root, char *path) {
+struct simplefs_node *simplefs_create_node(struct simplefs_node *root, char  *path) {
     struct simplefs_node *parent_node;
     struct simplefs_node *new_node;
-    char *new_node_name = NULL;
+    char *new_node_name = NULL, *new_path = NULL;
 
+    new_node_name = get_last_path_entry(path);
+    new_path = remove_last_path_entry(path); 
     
-    new_node_name = remove_last_entry_from_path(path); 
-    
-    parent_node = simplefs_walk_path(root, path);
-    
+    parent_node = simplefs_walk_path(root, new_path);
     if(parent_node == NULL) {
-        return 0;
+        return NULL;
     }
     
     new_node = simplefs_init_node(parent_node, new_node_name, NULL, NULL);
 
     if(new_node == NULL) {
-        return 0;
+        return NULL;
     } 
 
     if(simplefs_add_son_to_node(parent_node, new_node) == 0) {
-        return 0;
+        return NULL;
     }
 
-    return 1;
+    return new_node;
 }
 
+struct simplefs_node *simplefs_create_dir(struct simplefs_node *root, char *path) {
+    struct simplefs_node *new_node = NULL;
+    struct simplefs_node_group *new_group = NULL;
+
+    new_node = simplefs_create_node(root, path);
+    if(new_node == NULL) {
+        return NULL;
+    }
+
+    new_group = simplefs_init_node_group(new_node, NULL);
+    if(simplefs_add_group_to_node(new_node, new_group) == 0) {
+        return NULL;
+    }
+
+    return new_node;
+}
 
 /*
  * Parsing a line representing a command.
@@ -388,8 +413,6 @@ int main() {
 
     //printf("%s\n", split_path("/")[0]);
     
-    char *path = strdup("/a/b/");
-    printf("%s\n", remove_last_entry_from_path(path));
 
     struct simplefs_node *root;
     root = simplefs_init_node(NULL, "root", NULL, NULL);
@@ -398,14 +421,33 @@ int main() {
     root_dir = simplefs_init_node_group(root, NULL);
     simplefs_add_group_to_node(root, root_dir);
 
+
+    simplefs_create_dir(root, "/a");
+    simplefs_create_node(root, "/a/file1");
+    
+    
+
+    printf("%s", simplefs_walk_path(root, "/a/file1")->name);
+
     int i = 0;
-    char a[10] = "/aX";
+    char s[255][255];
+    int depth = 0;
+    
+    //simplefs_walk_path(root, "/a/b/b/b/b/b/b/b/b");
+    /*
+    char a[10]; 
     for(i = 0; i < 1040; i++) {
-        sprintf(a, "/a%d", i);
-        printf("%d: ", i);
-        if(simplefs_create_node(root, a) == 0) printf("no\n");
-        else printf("ok\n");
+        snprintf(a, 10, "/a%d", i);
+        printf("%d\t%s: ", i, a);
+        if((tmp=simplefs_create_node(root, a))!=NULL) {
+            printf("ok\n");
+            simplefs_update_file_node(tmp, "prova file");
+        }
+        else printf("no\n");
     }
+
+    printf("%s %s\n", (root->dir->sons)[0]->name,(root->dir->sons)[0]->file_content); 
+*/
     //sleep(60);
 /*
     simplefs_create_node(root, strdup("/a"));
