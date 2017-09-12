@@ -30,7 +30,7 @@
  * GROUPS_PER_NODE represents the number of groups for each directory,
  * that is the maximum length of the linked list.
  */ 
-#define SONS_PER_GROUP 32
+#define SONS_PER_GROUP 64
 #define GROUPS_PER_NODE MAX_SONS_PER_NODE/SONS_PER_GROUP
 
 struct simplefs_node {
@@ -124,7 +124,11 @@ char *remove_last_path_entry(char *path) {
     last_slash = strrchr(new_path, '/');
     
     if(last_slash == new_path) {
-        return strdup("/");
+        char *t = malloc(sizeof(char) * 2);
+        t[0] = '/';
+        t[1] = '\0';
+        return t;
+        //return strdup("/");
     }
     
     *last_slash = '\0';
@@ -425,20 +429,10 @@ int simplefs_delete_node(struct simplefs_node *node) {
        
         
         if(free_sons == -1) { 
-            free(node->file_content); 
             return 1;
         }
         
-        if(node->dir != NULL) {
-            iterator = node->dir;
-            while(iterator != NULL) {
-                iterator = iterator->next;
-                free(node->dir);
-                node->dir = iterator;
-            }
-        }
         node = NULL;
-        free(node);
         return 1;
     } else {
         return 0;
@@ -451,18 +445,6 @@ int simplefs_delete_node_recursive(struct simplefs_node *node) {
     int i = 0; 
     int result;
     
-    iterator = node->dir; 
-    while(iterator != NULL) {
-        for(i = 0; i < SONS_PER_GROUP; i++) {
-            if((iterator->sons)[i] != NULL) {
-                result = simplefs_delete_node((iterator->sons)[i]);
-                if(result == 0) {
-                    simplefs_delete_node_recursive((iterator->sons)[i]);
-                } 
-            }
-        }
-        iterator = iterator->next;
-    }
     node->dir = NULL;
     return simplefs_delete_node(node);
 }
@@ -481,7 +463,7 @@ int simplefs_delete(struct simplefs_node *root, char *path) {
 
 int simplefs_delete_recursive(struct simplefs_node *root, char *path) {
     struct simplefs_node *tmp = NULL;
-
+    
     tmp = simplefs_walk_path(root, path); 
     if(tmp == NULL) {
        return 0;
