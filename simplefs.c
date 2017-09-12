@@ -2,6 +2,7 @@
  * SimpleFS, un semplice filesystem
  */
 
+
 /* To avoid getline warning during compilation */
 #define _GNU_SOURCE
 
@@ -10,11 +11,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <assert.h>
+#include <time.h>
+
+//#define BENCHMARK
+#define DEBUG
 /*
  * Imposed restrictions.
  */
 #define MAX_NAME_LENGTH   255
-#define MAX_TREE_HEIGHT   255
+#define MAX_TREE_HEIGHT   254
 #define MAX_SONS_PER_NODE 1024
 
 /*
@@ -25,7 +30,7 @@
  * GROUPS_PER_NODE represents the number of groups for each directory,
  * that is the maximum length of the linked list.
  */ 
-#define SONS_PER_GROUP 128
+#define SONS_PER_GROUP 32
 #define GROUPS_PER_NODE MAX_SONS_PER_NODE/SONS_PER_GROUP
 
 struct simplefs_node {
@@ -51,7 +56,6 @@ struct simplefs_node {
      * Otherwise it will be NULL.
      */
     char *file_content;
-
 };
 
 struct simplefs_node_group {
@@ -65,6 +69,11 @@ struct simplefs_node_group {
     
     /* free_sons keeps track of how many "free slots" are remained */
     int free_sons;
+};
+
+struct sll_node {
+    char *data;
+    struct sll_node *next;
 };
 
 int split_path(char *path, char destination[MAX_NAME_LENGTH][MAX_TREE_HEIGHT]) {
@@ -242,7 +251,7 @@ struct simplefs_node *simplefs_find_son(struct simplefs_node *node, char *name) 
 
 
 struct simplefs_node *simplefs_walk_path(struct simplefs_node *root, char *path) {
-    char directories[255][255];
+    char directories[MAX_NAME_LENGTH][MAX_TREE_HEIGHT];
     int depth = 0;
     int i = 0;
     struct simplefs_node *nextup = root;
@@ -308,7 +317,7 @@ struct simplefs_node *simplefs_create_node(struct simplefs_node *root, char  *pa
 
     new_node_name = get_last_path_entry(path);
     new_path = remove_last_path_entry(path); 
-    
+
     parent_node = simplefs_walk_path(root, new_path);
     if(parent_node == NULL) {
         return NULL;
@@ -350,6 +359,8 @@ char *simplefs_read(struct simplefs_node *root, char *path) {
 
     if(target == NULL) {
         return NULL;
+    } else if(target->dir != NULL) {
+        return NULL;
     }
 
     return target->file_content;
@@ -361,6 +372,8 @@ int simplefs_write(struct simplefs_node *root, char *path, char *content) {
     target = simplefs_walk_path(root, path);
 
     if(target == NULL) {
+        return 0;
+    } else if(target->dir != NULL) {
         return 0;
     }
 
@@ -393,7 +406,6 @@ int simplefs_delete_node(struct simplefs_node *node) {
     struct simplefs_node_group *iterator = NULL;
     int i = 0;
     int free_sons = simplefs_get_free_sons_for_node(node); 
-    
     if(free_sons < 0 || free_sons == MAX_SONS_PER_NODE) {
         /*
          * freeing target from parent.
@@ -410,6 +422,7 @@ int simplefs_delete_node(struct simplefs_node *node) {
             }
             iterator = iterator->next;
         }
+       
         
         if(free_sons == -1) { 
             free(node->file_content); 
@@ -424,6 +437,7 @@ int simplefs_delete_node(struct simplefs_node *node) {
                 node->dir = iterator;
             }
         }
+        node = NULL;
         free(node);
         return 1;
     } else {
@@ -435,18 +449,22 @@ int simplefs_delete_node_recursive(struct simplefs_node *node) {
     struct simplefs_node_group *iterator = NULL;
     struct simplefs_node *tmp = NULL;
     int i = 0; 
-
+    int result;
+    
     iterator = node->dir; 
     while(iterator != NULL) {
         for(i = 0; i < SONS_PER_GROUP; i++) {
             if((iterator->sons)[i] != NULL) {
-                if(simplefs_delete_node((iterator->sons)[i]) == 0) {
-                    return simplefs_delete_node_recursive((iterator->sons)[i]);
+                result = simplefs_delete_node((iterator->sons)[i]);
+                if(result == 0) {
+                    simplefs_delete_node_recursive((iterator->sons)[i]);
                 } 
             }
         }
         iterator = iterator->next;
     }
+    node->dir = NULL;
+    return simplefs_delete_node(node);
 }
 
 int simplefs_delete(struct simplefs_node *root, char *path) {
@@ -462,16 +480,96 @@ int simplefs_delete(struct simplefs_node *root, char *path) {
 }
 
 int simplefs_delete_recursive(struct simplefs_node *root, char *path) {
-    struct simplefs_node_group *iterator = NULL;
     struct simplefs_node *tmp = NULL;
-    int i = 0; 
-    char *current_node_path;
 
     tmp = simplefs_walk_path(root, path); 
     if(tmp == NULL) {
        return 0;
     }
     return simplefs_delete_node_recursive(tmp);
+}
+
+struct sll_node *init_sll_node(struct sll_node *next, char *data) {
+    struct sll_node *new_node = NULL;
+    new_node = malloc(sizeof(struct sll_node));
+    new_node->next = next;
+    new_node->data = malloc(sizeof(char) * strlen(data));
+    strcpy(new_node->data, data);
+    return new_node;
+}
+
+void print_sll(struct sll_node *start) {
+    struct sll_node *i = NULL;
+    i = start;
+    if(i == NULL) {
+        printf("no\n");
+    }
+    while(i != NULL) {
+        printf("ok %s\n", i->data);
+        i = i->next;
+    }
+}
+
+int add_to_sll(struct sll_node **start_node, char *data) {
+    struct sll_node *node, *iterator, *new_node;
+    int comparison;
+    
+    node = *start_node;
+    iterator = node;
+    
+    new_node = init_sll_node(NULL, data);
+    if(new_node == NULL) return 0;
+
+    if(iterator->next == NULL) {
+        iterator->next = new_node;
+        return 1;
+    }
+
+    if(strcmp(data, node->data) < 0) {
+        new_node->next = *start_node;
+        *start_node = new_node;
+        return 1;
+    }
+
+    while(iterator->next != NULL) {
+        comparison = strcmp(data, iterator->next->data);
+        if(comparison < 0) {
+            new_node->next = iterator->next;
+            iterator->next = new_node;
+            return 1;
+        } else if(comparison > 0) {
+            iterator = iterator->next;
+        } else {
+            return 0;
+        }
+    }
+    iterator->next = new_node;
+    return 1;
+}
+
+
+void simplefs_find(struct simplefs_node *node, char *name, struct sll_node **s, char *full_path) {
+    char g_path[5000];
+    int i = 0;
+    struct simplefs_node_group *iterator = NULL;
+    memset(g_path, 0, 5000);
+    iterator = node->dir;
+    while(iterator != NULL) {
+        for(i = 0; i < SONS_PER_GROUP; i++) {
+            if((iterator->sons)[i] != NULL) {
+                strcpy(g_path, full_path);
+                strcat(g_path, "/");
+                strcat(g_path, (iterator->sons)[i]->name);
+                if(strcmp((iterator->sons)[i]->name,name) == 0) {
+                    add_to_sll(s, g_path);
+                }
+                simplefs_find((iterator->sons)[i], name, s, g_path);
+            }
+        }
+        iterator = iterator->next;
+    }
+    return;
+        
 }
 /*
  * Parsing a line representing a command.
@@ -535,7 +633,6 @@ int simplefs_execute_command( struct simplefs_node *root, char *command_name, ch
         second_argument++;
         *(second_argument + strlen(second_argument) - 1) = '\0';
         int written_chars = simplefs_write(root, first_argument, second_argument);
-        
         if(written_chars == 0) {
             printf("no\n");
         } else {
@@ -553,8 +650,12 @@ int simplefs_execute_command( struct simplefs_node *root, char *command_name, ch
         } else {
             printf("ok\n");
         }
+
     } else if(strcmp("find", command_name) == 0){
-        printf("find called!\n");    
+        struct sll_node *n = init_sll_node(NULL, "");
+        simplefs_find(root, first_argument, &n, ""); 
+        n = n->next;
+        print_sll(n);
     } else if(strcmp("exit", command_name) == 0){
         exit(EXIT_SUCCESS);
     }
@@ -579,115 +680,27 @@ int main() {
     root_dir = simplefs_init_node_group(root, NULL);
     simplefs_add_group_to_node(root, root_dir);
 
+    struct timespec start, end;
     int i = 1;
-    
     while ((read = getline(&line, &len, stdin)) != -1) {
         number_of_arguments = simplefs_parse_command_line(line, &command_name, &first_argument, &second_argument);
+#ifdef BENCHMARK
+        clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+#endif
         simplefs_execute_command(root, command_name, first_argument, second_argument); 
+#ifdef BENCHMARK
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        printf("%ld\n\n", end.tv_nsec - start.tv_nsec);
+#endif
         command_name = NULL;
         first_argument = NULL;
         second_argument = NULL;
         i++;
     }
-    printf("\n");
+
     if (line)
         free(line);
-    
+   
     exit(EXIT_SUCCESS);
 }
-/*
-    simplefs_create_dir(root, "/a");
-    //simplefs_create_node(root, "/a/file1");
-
-    int j = 0;
-    char b[10];
-    int r = 0;
-    for(j=0;j<1029;j++){
-        snprintf(b, 10, "/a/j%d", j); 
-        if(j<1024) assert(simplefs_create_node(root, b)!=NULL);
-        else assert(simplefs_create_node(root, b)==NULL);
-        printf("%d:\t%d\t%d\n", j, simplefs_get_free_sons_for_node(root),root->number_of_groups);
-        simplefs_write(root, b, "file di prova");
-        
-        //        assert(simplefs_walk_path(root, b) == NULL);
-    }    
-
-    simplefs_write(root, "/a/j2", "file di prova");
-    //assert(simplefs_write(root, "/a/file1", "ciaociao")!=0); 
-
-    //printf("%s\n", simplefs_read(root, "/a/file1"));
-    //
-    simplefs_create_dir(root, "/b");
-    simplefs_create_node(root, "/b/b1");
-    //simplefs_create_node(root, "/b/b2");
-    //simplefs_create_node(root, "/b/b3");
-    //simplefs_create_node(root, "/b/b4");
-    printf("%d\n", simplefs_delete_recursive(root, "/a"));
-    printf("%s\n", simplefs_read(root, "/a/j300"));
-    int i = 0;
-    char s[255][255];
-    int depth = 0;
-    
-    //simplefs_walk_path(root, "/a/b/b/b/b/b/b/b/b");
-    /*
-    char a[10]; 
-    for(i = 0; i < 1040; i++) {
-        snprintf(a, 10, "/a%d", i);
-        printf("%d\t%s: ", i, a);
-        if((tmp=simplefs_create_node(root, a))!=NULL) {
-            printf("ok\n");
-            simplefs_update_file_node(tmp, "prova file");
-        }
-        else printf("no\n");
-    }
-
-    printf("%s %s\n", (root->dir->sons)[0]->name,(root->dir->sons)[0]->file_content); 
-*/
-    //sleep(60);
-/*
-    simplefs_create_node(root, strdup("/a"));
-    printf("%s\n", simplefs_walk_path(root, "/a")->name);
-    struct simplefs_node *root;
-    struct simplefs_node_group *g1;
-    struct simplefs_node_group *g2;
-    g2 = simplefs_init_node_group(root, NULL);
-    g1 = simplefs_init_node_group(root, g2);
-    root = simplefs_init_node(NULL, "root", g1, NULL);
-    if(root == NULL){
-        printf("Errore nell'inizializzazione di root.");
-        exit(EXIT_FAILURE);
-    }
-
-
-    printf("%d\n", root->dir->next->free_sons);
-    
-    int r = simplefs_update_file_node(root, "riprova");
-
-    printf("%s %d\n", root->file_content, r);
-
-    struct simplefs_node *n1,*n2;
-    n1 = simplefs_init_node(root, "n1", NULL, "file n1");
-    n2 = simplefs_init_node(root, "n2", NULL, "file n2");
-    
-
-    (root->dir->sons)[0] = n1;
-    (g2->sons)[0] = n2;
-    
-    struct simplefs_node *foo = simplefs_init_node(NULL, "foo", NULL, NULL);
-    int x = 0;
-    for(x = 0; x < 40; x++){
-        struct simplefs_node_group *tmp = simplefs_init_node_group(foo, NULL);
-        printf("%d: %d\n", x, simplefs_add_group_to_node(foo, tmp));
-    }
-
-    printf("%d\n", simplefs_create_node(root, "/n1"));
-  */  
-
-    /*int i;
-    for(i = 0; i<20; i++){
-        printf("%d: %d\n", i, simplefs_add_new_group_to_node(root));
-    }
-    simplefs_add_new_group_to_node(root);
-    printf("%d %d\n", root->dir->free_sons, root->number_of_groups);*/
-
 
